@@ -11,6 +11,33 @@ st.set_page_config(
 
 # -----------------------------------------------------------------------------
 # Data loading helpers
+@st.cache_data
+def get_unemployment_data() -> pd.DataFrame:
+    """Load unemployment data (SL.UEM.TOTL.ZS) from a World Bank CSV and return long-form.
+
+    Output columns: Country Code, Year, Unemployment (%)
+    """
+    DATA_FILENAME = Path(__file__).parent / "data/unemployment_data.csv"
+    raw_unemp_df = _read_world_bank_csv_data_table(DATA_FILENAME)
+
+    raw_unemp_df = raw_unemp_df[raw_unemp_df["Indicator Code"] == "SL.UEM.TOTL.ZS"]
+
+    year_cols = [c for c in raw_unemp_df.columns if isinstance(c, str) and c.isdigit()]
+
+    unemp_df = raw_unemp_df.melt(
+        id_vars=["Country Code"],
+        value_vars=year_cols,
+        var_name="Year",
+        value_name="Unemployment rate",
+    )
+
+    unemp_df["Year"] = pd.to_numeric(unemp_df["Year"], errors="coerce")
+    unemp_df["Unemployment rate"] = pd.to_numeric(unemp_df["Unemployment rate"], errors="coerce")
+
+    unemp_df = unemp_df.dropna(subset=["Year"])
+    unemp_df["Year"] = unemp_df["Year"].astype(int)
+
+    return unemp_df
 
 @st.cache_data
 def _read_world_bank_csv_data_table(filename: Path) -> pd.DataFrame:
@@ -99,16 +126,18 @@ def get_population_data() -> pd.DataFrame:
 # Load datasets
 gdp_df = get_gdp_data()
 pop_df = get_population_data()
+unemp_df = get_unemployment_data()
 
-# Ensure we only compute per-capita where GDP years exist (GDP file currently goes through 2022)
 min_year = int(gdp_df["Year"].min())
 max_year = int(gdp_df["Year"].max())
+
 pop_df = pop_df[pop_df["Year"].between(min_year, max_year)]
+unemp_df = unemp_df[unemp_df["Year"].between(min_year, max_year)]
 
-# Merge and compute GDP per capita
 df = gdp_df.merge(pop_df, on=["Country Code", "Year"], how="left")
-df["GDP per capita"] = df["GDP"] / df["Population"]
+df = df.merge(unemp_df, on=["Country Code", "Year"], how="left")
 
+df["GDP per capita"] = df["GDP"] / df["Population"]
 # -----------------------------------------------------------------------------
 # Draw the actual page
 
@@ -140,7 +169,7 @@ selected_countries = st.multiselect(
 
 metric = st.radio(
     "Metric",
-    options=["GDP", "GDP per capita"],
+    options=["GDP", "GDP per capita", "Unemployment rate"],
     horizontal=True,
 )
 
@@ -181,9 +210,9 @@ def _format_value(metric_name: str, value: float) -> str:
     if pd.isna(value):
         return "n/a"
     if metric_name == "GDP":
-        # show billions
         return f"{value/1_000_000_000:,.0f}B"
-    # GDP per capita: show as a plain number (you can prefix '$' if desired)
+    if metric_name == "Unemployment rate":
+        return f"{value:,.1f}%"
     return f"{value:,.0f}"
 
 for i, country in enumerate(selected_countries):
