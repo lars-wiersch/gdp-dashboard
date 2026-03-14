@@ -121,23 +121,56 @@ def get_population_data() -> pd.DataFrame:
     pop_df.loc[pop_df["Population"] == 0, "Population"] = pd.NA
 
     return pop_df
+    
+@st.cache_data
+def get_gdp_pc_ppp_data() -> pd.DataFrame:
+    """Load GDP per capita, PPP (constant 2021 international $) and return long-form.
 
+    Output columns: Country Code, Year, GDP per capita, PPP (const 2021 int $)
+    """
+    DATA_FILENAME = Path(__file__).parent / "data/gdp_pc_ppp.csv"
+    raw_df = _read_world_bank_csv_data_table(DATA_FILENAME)
+
+    raw_df = raw_df[raw_df["Indicator Code"] == "NY.GDP.PCAP.PP.KD"]
+
+    year_cols = [c for c in raw_df.columns if isinstance(c, str) and c.isdigit()]
+
+    out_df = raw_df.melt(
+        id_vars=["Country Code"],
+        value_vars=year_cols,
+        var_name="Year",
+        value_name="GDP pc PPP (const 2021 int$)",
+    )
+
+    out_df["Year"] = pd.to_numeric(out_df["Year"], errors="coerce")
+    out_df["GDP pc PPP (const 2021 int$)"] = pd.to_numeric(
+        out_df["GDP pc PPP (const 2021 int$)"], errors="coerce"
+    )
+
+    out_df = out_df.dropna(subset=["Year"])
+    out_df["Year"] = out_df["Year"].astype(int)
+
+    return out_df
 
 # Load datasets
 gdp_df = get_gdp_data()
 pop_df = get_population_data()
 unemp_df = get_unemployment_data()
+gdp_pc_ppp_df = get_gdp_pc_ppp_data()
 
 min_year = int(gdp_df["Year"].min())
 max_year = int(gdp_df["Year"].max())
 
 pop_df = pop_df[pop_df["Year"].between(min_year, max_year)]
 unemp_df = unemp_df[unemp_df["Year"].between(min_year, max_year)]
+gdp_pc_ppp_df = gdp_pc_ppp_df[gdp_pc_ppp_df["Year"].between(min_year, max_year)]
 
 df = gdp_df.merge(pop_df, on=["Country Code", "Year"], how="left")
 df = df.merge(unemp_df, on=["Country Code", "Year"], how="left")
+df = df.merge(gdp_pc_ppp_df, on=["Country Code", "Year"], how="left")
 
 df["GDP per capita"] = df["GDP"] / df["Population"]
+
 # -----------------------------------------------------------------------------
 # Draw the actual page
 
@@ -169,7 +202,12 @@ selected_countries = st.multiselect(
 
 metric = st.radio(
     "Metric",
-    options=["GDP", "GDP per capita", "Unemployment rate"],
+    options=[
+        "GDP",
+        "GDP per capita",
+        "GDP pc PPP (const 2021 int$)",
+        "Unemployment rate",
+    ],
     horizontal=True,
 )
 
@@ -213,6 +251,8 @@ def _format_value(metric_name: str, value: float) -> str:
         return f"{value/1_000_000_000:,.0f}B"
     if metric_name == "Unemployment rate":
         return f"{value:,.1f}%"
+    if metric_name == "GDP pc PPP (const 2021 int$)":
+        return f"{value:,.0f}"
     return f"{value:,.0f}"
 
 for i, country in enumerate(selected_countries):
